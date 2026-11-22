@@ -1,0 +1,82 @@
+# WhisperX Pipeline UI: one stateless Deployment and a Service.
+#
+#   kubectl apply -f deploy/whisperx-ui.yaml
+#   kubectl -n whisperx-ui port-forward svc/whisperx-ui 8080:80
+#   open http://localhost:8080
+#
+# The app stores nothing: users upload a kubeconfig in the browser and the app
+# acts on that cluster with it. The pod itself has no cluster permissions.
+#
+# The UI has no user accounts. Keep it on a trusted network, or set
+# UI_USERNAME / UI_PASSWORD below to put a sign-in in front of it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: whisperx-ui
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisperx-ui
+  namespace: whisperx-ui
+  labels: { app: whisperx-ui }
+spec:
+  replicas: 1                 # stateless: scale up freely
+  selector:
+    matchLabels: { app: whisperx-ui }
+  template:
+    metadata:
+      labels: { app: whisperx-ui }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      # Only needed when the app must reach an S3 endpoint that cluster DNS
+      # cannot resolve (to test the connection, upload recordings and show
+      # results). The UI's "IP address of the storage" field covers the same.
+      # hostAliases:
+      #   - ip: 192.0.2.10
+      #     hostnames: [s3.example.com]
+      containers:
+        - name: ui
+          image: docker.io/aksiio/whisperx-ui:0.1.0
+          ports:
+            - { name: http, containerPort: 8080 }
+          # env:
+          #   - { name: UI_USERNAME, value: admin }
+          #   - name: UI_PASSWORD
+          #     valueFrom: { secretKeyRef: { name: whisperx-ui-login, key: password } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        # Scratch space: per-request kubeconfig files (deleted after each
+        # request) and uploads on their way to S3. In memory, never on disk.
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: whisperx-ui
+  namespace: whisperx-ui
+  labels: { app: whisperx-ui }
+spec:
+  type: ClusterIP             # change to LoadBalancer to get an address on your network
+  selector: { app: whisperx-ui }
+  ports:
+    - { name: http, port: 80, targetPort: http }

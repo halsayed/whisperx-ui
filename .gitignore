@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# never commit cluster access or keys
+*.conf
+kubeconfig*
+*.tmp
+.env
+cred/

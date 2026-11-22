@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhisperX Pipeline</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f46e5'/%3E%3Cpath d='M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="7" fill="#4f46e5"/><path d="M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+    <div><b>WhisperX Pipeline</b><span>Voice recordings to text, on your Kubernetes cluster</span></div>
+  </div>
+  <div id="conn-chip" class="hidden">
+    <span class="chip" id="chip-text"></span>
+    <button class="ghost" id="btn-disconnect">Disconnect</button>
+  </div>
+</header>
+
+<main>
+  <!-- ============ connect ============ -->
+  <section id="view-connect" class="hidden narrow">
+    <div class="card">
+      <h2>Connect to your cluster</h2>
+      <p class="muted">Choose the kubeconfig file of the cluster where the pipeline should run. It stays in this browser and is sent only to this app, which uses it to talk to the cluster. Nothing is stored on the server.</p>
+      <div id="drop" class="drop">
+        <b>Drop the kubeconfig file here</b>
+        <span>or <label class="link">browse<input type="file" id="kc-file" hidden></label>, or paste its content below</span>
+        <div id="kc-name" class="ok-text"></div>
+      </div>
+      <textarea id="kc-text" rows="5" placeholder="apiVersion: v1&#10;kind: Config&#10;..." spellcheck="false"></textarea>
+      <div class="grid2">
+        <label>Namespace <small>(a private area in the cluster for the pipeline)</small>
+          <input id="kc-ns" value="whisperx"></label>
+        <label id="kc-ctx-wrap" class="hidden">Cluster entry (context)
+          <select id="kc-ctx"></select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="kc-remember"> Remember on this browser <small>(otherwise forgotten when the tab closes)</small></label>
+      <div class="row">
+        <button class="primary" id="btn-connect">Connect</button>
+        <button id="btn-incluster" class="hidden">Use the cluster this app runs in</button>
+      </div>
+      <div id="connect-msg"></div>
+    </div>
+  </section>
+
+  <!-- ============ app ============ -->
+  <section id="view-app" class="hidden">
+    <nav>
+      <button data-tab="setup" class="tab">1 · Setup</button>
+      <button data-tab="files" class="tab">2 · Recordings</button>
+      <button data-tab="runs" class="tab">3 · Runs</button>
+      <span class="spacer"></span>
+      <div id="ready"></div>
+    </nav>
+
+    <!-- setup -->
+    <div id="tab-setup" class="tabpane">
+      <form id="setup-form" autocomplete="off">
+        <div class="card">
+          <h3><span class="num">1</span> Model storage <span id="b-storage"></span></h3>
+          <p class="muted">The speech models (about 6 GB) live on an NFS share, so runs never need the internet.</p>
+          <div id="storage-existing" class="hidden note"></div>
+          <div id="storage-new" class="grid2">
+            <label>NFS server <small>name or IP address</small><input name="nfsServer" placeholder="10.0.0.10"></label>
+            <label>Share path<input name="nfsPath" placeholder="/voice-models"></label>
+          </div>
+          <div class="row">
+            <button type="button" id="btn-check">Check that the models are on the share</button>
+            <span id="check-status" class="muted"></span>
+          </div>
+          <ul id="check-items" class="checks"></ul>
+          <details>
+            <summary>The share is empty? Download the models</summary>
+            <p class="muted">Needs internet access from the cluster and a Hugging Face token (read). The token's account must have accepted the terms of <code>pyannote/speaker-diarization-3.1</code> and <code>pyannote/segmentation-3.0</code>. Takes about 10 minutes.</p>
+            <div class="row">
+              <input id="hf-token" type="password" placeholder="hf_..." autocomplete="new-password" style="max-width:320px">
+              <button type="button" id="btn-download">Download models</button>
+              <button type="button" id="btn-download-log" class="ghost hidden">Show progress</button>
+              <span id="download-status" class="muted"></span>
+            </div>
+          </details>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">2</span> Object storage (S3) <span id="b-s3"></span></h3>
+          <p class="muted">Recordings are read from one bucket folder and the text results are written to another.</p>
+          <div class="grid2">
+            <label>Storage address<input name="endpoint" placeholder="https://s3.example.com" required></label>
+            <label>Region<input name="region" value="us-east-1"></label>
+            <label>Access key ID<input name="accessKey" autocomplete="off"></label>
+            <label>Secret access key<input name="secretKey" type="password" autocomplete="new-password"></label>
+            <label>Recordings bucket<input name="inputBucket" placeholder="voice-recordings" required></label>
+            <label>Folder for recordings<input name="inputPrefix" value="in/"></label>
+            <label>Results bucket <small>may be the same</small><input name="outputBucket" placeholder="voice-recordings" required></label>
+            <label>Folder for results<input name="outputPrefix" value="out/"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="verifySsl" checked> Verify the storage certificate <small>(turn off for self-signed certificates)</small></label>
+          <details>
+            <summary>The cluster cannot find the storage by name?</summary>
+            <label>IP address of the storage <small>only needed when the cluster's DNS does not know the name above</small>
+              <input name="hostIp" placeholder="10.0.0.20" style="max-width:260px"></label>
+          </details>
+          <div class="row">
+            <button type="button" id="btn-s3test">Test connection</button>
+            <span class="muted small">Tested from this app; the run itself connects from inside the cluster.</span>
+          </div>
+          <ul id="s3-results" class="checks"></ul>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">3</span> Worker image <span id="b-image"></span></h3>
+          <p class="muted">The container image that does the transcription. Sign-in is only needed for a private registry.</p>
+          <label>Image<input name="image"></label>
+          <div class="grid2">
+            <label>Registry user <small>optional</small><input name="registryUser" autocomplete="off"></label>
+            <label>Registry token or password <small>optional</small><input name="registryToken" type="password" autocomplete="new-password"></label>
+          </div>
+          <details>
+            <summary>Not Docker Hub?</summary>
+            <label>Registry address<input name="registryServer" placeholder="https://index.docker.io/v1/" style="max-width:360px"></label>
+          </details>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">4</span> GPU and transcription</h3>
+          <div class="grid2">
+            <label>GPU type<select name="gpuProduct"></select></label>
+            <label>Model
+              <select name="model">
+                <option value="large-v3">large-v3 — most accurate</option>
+                <option value="large-v3-turbo">large-v3-turbo — faster</option>
+              </select></label>
+            <label>Precision
+              <select name="computeType">
+                <option value="float16">Standard (float16) — GPUs with more than 8 GB</option>
+                <option value="int8_float16">Compact (int8_float16) — GPUs with 8 GB or less</option>
+              </select></label>
+            <label>Batch size <small>16 for large GPUs, 4 for small ones</small><input name="batchSize" type="number" min="1" max="64" value="16"></label>
+            <label>Language
+              <select name="language">
+                <option value="">Detect for each recording</option>
+                <option value="en">English</option>
+                <option value="ar">Arabic</option>
+              </select></label>
+            <div></div>
+          </div>
+          <div id="gpu-hint" class="note hidden"></div>
+          <label class="check"><input type="checkbox" name="diarize" checked> Label who is speaking <small>(speaker detection)</small></label>
+          <div class="grid2" id="speakers">
+            <label>Fewest speakers <small>optional</small><input name="minSpeakers" type="number" min="1" max="20"></label>
+            <label>Most speakers <small>optional</small><input name="maxSpeakers" type="number" min="1" max="20"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="overwrite"> Transcribe recordings again even if they already have results</label>
+          <label class="check"><input type="checkbox" name="restrictEgress"> Lock down the network: runs may only reach the object storage <small>(shows that no internet is used)</small></label>
+        </div>
+
+        <div class="savebar">
+          <button class="primary" type="submit" id="btn-save">Save and apply to the cluster</button>
+          <span id="save-status" class="muted"></span>
+        </div>
+        <ul id="save-steps" class="checks"></ul>
+      </form>
+    </div>
+
+    <!-- recordings -->
+    <div id="tab-files" class="tabpane hidden">
+      <div class="card">
+        <div class="row between">
+          <div><h3>Recordings</h3><div id="files-where" class="muted small"></div></div>
+          <div class="row">
+            <button id="btn-files-refresh">Refresh</button>
+            <button class="primary" data-start>Start transcription</button>
+          </div>
+        </div>
+        <div id="updrop" class="drop slim">
+          <b>Drop audio files here to upload</b>
+          <span>or <label class="link">browse<input type="file" id="up-file" multiple hidden accept="audio/*,video/mp4,.wav,.mp3,.m4a,.mp4,.flac,.ogg,.opus,.aac,.wma,.webm,.amr"></label> · wav, mp3, m4a, mp4, flac, ogg, opus, aac, wma, webm, amr</span>
+          <div id="up-status"></div>
+        </div>
+        <div id="files-msg"></div>
+        <div class="tablewrap"><table id="files-table" class="hidden">
+          <thead><tr><th>Recording</th><th>Size</th><th>Uploaded</th><th>Status</th><th>Results</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- runs -->
+    <div id="tab-runs" class="tabpane hidden">
+      <div class="card">
+        <div class="row between">
+          <div><h3>Runs</h3><div class="muted small">Each run transcribes every recording that has no result yet, then stops. Finished runs are kept for a week.</div></div>
+          <button class="primary" data-start>Start transcription</button>
+        </div>
+        <div id="runs-msg"></div>
+        <div id="runs-list"></div>
+      </div>
+      <div class="card hidden" id="run-detail">
+        <div class="row between">
+          <h3 id="run-title"></h3>
+          <div class="row">
+            <label class="check small"><input type="checkbox" id="log-raw"> Show full technical log</label>
+            <button id="btn-run-stop" class="danger"></button>
+          </div>
+        </div>
+        <div id="run-progress"></div>
+        <div class="tablewrap"><table id="run-files" class="hidden">
+          <thead><tr><th>Recording</th><th>Result</th><th>Language</th><th>Length</th><th>Took</th><th>Speed</th><th>Speakers</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <pre id="run-log" class="log hidden"></pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="row between"><h3 id="modal-title"></h3><button class="ghost" id="modal-close">Close</button></div>
+    <pre id="modal-body" dir="auto"></pre>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+<footer><span id="version"></span> · Stateless: your kubeconfig stays in this browser; settings live in your cluster.</footer>
+<script src="app.js"></script>
+</body>
+</html>

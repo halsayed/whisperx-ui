@@ -1,0 +1,58 @@
+# OPTIONAL: let the UI manage the cluster it runs in, so users do not need a
+# kubeconfig at all ("Use the cluster this app runs in" button).
+#
+#   kubectl apply -f deploy/whisperx-ui.yaml -f deploy/in-cluster-access.yaml
+#
+# then switch the Deployment to the ServiceAccount and turn the feature on:
+#
+#   kubectl -n whisperx-ui patch deployment whisperx-ui -p '{"spec":{"template":{"spec":{"serviceAccountName":"whisperx-ui","automountServiceAccountToken":true,"containers":[{"name":"ui","env":[{"name":"ALLOW_IN_CLUSTER","value":"true"}]}]}}}}'
+#
+# Read this before applying: everyone who can open the UI can then use these
+# permissions. Set UI_USERNAME / UI_PASSWORD on the Deployment, and do not
+# expose the UI beyond the people who should have this access.
+#
+# The permissions are wider than one namespace because the pipeline needs a
+# cluster-wide PersistentVolume (the NFS model share) and reads node labels to
+# list GPU types.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: whisperx-ui
+  namespace: whisperx-ui
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: whisperx-ui
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, persistentvolumes]
+    verbs: [get, list, create, patch]
+  - apiGroups: [""]
+    resources: [nodes, pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [configmaps, secrets, persistentvolumeclaims]
+    verbs: [get, list, create, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, create, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: whisperx-ui
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: whisperx-ui
+subjects:
+  - kind: ServiceAccount
+    name: whisperx-ui
+    namespace: whisperx-ui
